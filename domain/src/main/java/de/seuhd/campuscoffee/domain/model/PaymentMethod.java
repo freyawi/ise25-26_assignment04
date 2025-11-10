@@ -1,0 +1,9 @@
+package de.seuhd.campuscoffee.domain.model;
+
+public enum PaymentMethod {
+    CASH,
+    CREDIT_CARD,
+    DEBIT_CARD,
+    MOBILE_PAYMENT,
+    GIFT_CARD
+}
