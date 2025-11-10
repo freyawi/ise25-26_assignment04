@@ -2,8 +2,7 @@ package de.seuhd.campuscoffee.domain.impl;
 
 import de.seuhd.campuscoffee.domain.model.*;
 import de.seuhd.campuscoffee.domain.ports.SaleService;
-import de.seuhd.campuscoffee.data.persistence.*;
-import de.seuhd.campuscoffee.data.mapper.SaleEntityMapper;
+import de.seuhd.campuscoffee.domain.ports.SaleDataPort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -13,26 +12,21 @@ import org.jspecify.annotations.NonNull;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SaleServiceImpl implements SaleService {
-    private final SaleRepository saleRepository;
-    private final SaleEntityMapper saleMapper;
-    private final ProductRepository productRepository;
+    private final SaleDataPort saleDataPort;
 
     @Override
     @Transactional
     @NonNull
     public Sale createSale(@NonNull Sale sale) {
         log.debug("Creating new sale: {}", sale);
-        SaleEntity entity = saleMapper.modelToEntity(sale);
-        entity.setStatus(SaleStatus.IN_PROGRESS);
-        entity = saleRepository.save(entity);
-        return saleMapper.entityToModel(entity);
+        sale.setStatus(SaleStatus.IN_PROGRESS);
+        return saleDataPort.save(sale);
     }
 
     @Override
@@ -40,8 +34,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public Sale getSale(@NonNull Long id) {
         log.debug("Retrieving sale with ID: {}", id);
-        return saleRepository.findById(id)
-                .map(saleMapper::entityToModel)
+        return saleDataPort.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + id));
     }
 
@@ -50,9 +43,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public List<Sale> getSalesByDateRange(@NonNull LocalDateTime start, @NonNull LocalDateTime end) {
         log.debug("Retrieving sales between {} and {}", start, end);
-        return saleRepository.findByTimestampBetween(start, end).stream()
-                .map(saleMapper::entityToModel)
-                .collect(Collectors.toList());
+        return saleDataPort.findByTimestampBetween(start, end);
     }
 
     @Override
@@ -60,9 +51,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public List<Sale> getSalesByCashier(@NonNull Long cashierId) {
         log.debug("Retrieving sales for cashier ID: {}", cashierId);
-        return saleRepository.findByCashierId(cashierId).stream()
-                .map(saleMapper::entityToModel)
-                .collect(Collectors.toList());
+        return saleDataPort.findByCashierId(cashierId);
     }
 
     @Override
@@ -75,7 +64,7 @@ public class SaleServiceImpl implements SaleService {
     @Transactional
     public void voidSale(@NonNull Long saleId, @NonNull String reason, @NonNull Long cashierId) {
         log.debug("Voiding sale ID: {} by cashier: {}", saleId, cashierId);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.IN_PROGRESS) {
@@ -84,7 +73,7 @@ public class SaleServiceImpl implements SaleService {
         
         sale.setStatus(SaleStatus.VOIDED);
         sale.setNotes(reason);
-        saleRepository.save(sale);
+        saleDataPort.save(sale);
     }
 
     @Override
@@ -92,7 +81,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public CartItem addItemToCart(@NonNull Long saleId, @NonNull CartItem item) {
         log.debug("Adding item to sale ID: {}", saleId);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.IN_PROGRESS) {
@@ -102,22 +91,20 @@ public class SaleServiceImpl implements SaleService {
         // Calculate totals and add item
         BigDecimal itemTotal = calculateItemTotal(item);
         item.setTotal(itemTotal);
-        CartItemEntity itemEntity = cartItemMapper.modelToEntity(item);
-        sale.getItems().add(itemEntity);
-        itemEntity.setSale(sale);
+        sale.getItems().add(item);
         
         // Update sale totals
         updateSaleTotals(sale);
-        sale = saleRepository.save(sale);
+        saleDataPort.save(sale);
         
-        return cartItemMapper.entityToModel(itemEntity);
+        return item;
     }
 
     @Override
     @Transactional
     public void removeItemFromCart(@NonNull Long saleId, @NonNull Long itemId) {
         log.debug("Removing item {} from sale {}", itemId, saleId);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.IN_PROGRESS) {
@@ -126,14 +113,14 @@ public class SaleServiceImpl implements SaleService {
         
         sale.getItems().removeIf(item -> item.getId().equals(itemId));
         updateSaleTotals(sale);
-        saleRepository.save(sale);
+        saleDataPort.save(sale);
     }
 
     @Override
     @Transactional
     public void clearCart(@NonNull Long saleId) {
         log.debug("Clearing cart for sale ID: {}", saleId);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.IN_PROGRESS) {
@@ -142,7 +129,7 @@ public class SaleServiceImpl implements SaleService {
         
         sale.getItems().clear();
         updateSaleTotals(sale);
-        saleRepository.save(sale);
+        saleDataPort.save(sale);
     }
 
     @Override
@@ -150,7 +137,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public Sale applySaleDiscount(@NonNull Long saleId, @NonNull BigDecimal discount) {
         log.debug("Applying discount {} to sale {}", discount, saleId);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (discount.compareTo(sale.getSubtotal()) > 0) {
@@ -159,9 +146,7 @@ public class SaleServiceImpl implements SaleService {
         
         sale.setDiscount(discount);
         updateSaleTotals(sale);
-        sale = saleRepository.save(sale);
-        
-        return saleMapper.entityToModel(sale);
+        return saleDataPort.save(sale);
     }
 
     @Override
@@ -169,7 +154,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public Sale processSalePayment(@NonNull Long saleId, @NonNull PaymentMethod method, @NonNull BigDecimal amountTendered) {
         log.debug("Processing payment for sale {} with method {}", saleId, method);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.IN_PROGRESS) {
@@ -184,9 +169,7 @@ public class SaleServiceImpl implements SaleService {
         sale.setCashReceived(amountTendered);
         sale.setChangeGiven(amountTendered.subtract(sale.getTotal()));
         sale.setStatus(SaleStatus.COMPLETED);
-        sale = saleRepository.save(sale);
-        
-        return saleMapper.entityToModel(sale);
+        return saleDataPort.save(sale);
     }
 
     @Override
@@ -194,7 +177,7 @@ public class SaleServiceImpl implements SaleService {
     @NonNull
     public Sale addTipToSale(@NonNull Long saleId, @NonNull BigDecimal tipAmount) {
         log.debug("Adding tip {} to sale {}", tipAmount, saleId);
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = saleDataPort.findById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.IN_PROGRESS) {
@@ -203,9 +186,7 @@ public class SaleServiceImpl implements SaleService {
         
         sale.setTip(tipAmount);
         updateSaleTotals(sale);
-        sale = saleRepository.save(sale);
-        
-        return saleMapper.entityToModel(sale);
+        return saleDataPort.save(sale);
     }
 
     @Override
@@ -217,9 +198,9 @@ public class SaleServiceImpl implements SaleService {
         return getSalesByDateRange(startOfDay, endOfDay);
     }
 
-    private void updateSaleTotals(SaleEntity sale) {
+    private void updateSaleTotals(Sale sale) {
         BigDecimal subtotal = sale.getItems().stream()
-                .map(CartItemEntity::getTotal)
+                .map(CartItem::getTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         
         sale.setSubtotal(subtotal);

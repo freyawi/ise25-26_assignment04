@@ -3,9 +3,9 @@ package de.seuhd.campuscoffee.domain.impl;
 import de.seuhd.campuscoffee.domain.model.Refund;
 import de.seuhd.campuscoffee.domain.model.PaymentMethod;
 import de.seuhd.campuscoffee.domain.model.SaleStatus;
+import de.seuhd.campuscoffee.domain.model.Sale;
 import de.seuhd.campuscoffee.domain.ports.RefundService;
-import de.seuhd.campuscoffee.data.persistence.*;
-import de.seuhd.campuscoffee.data.mapper.RefundEntityMapper;
+import de.seuhd.campuscoffee.domain.ports.RefundDataPort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,16 +16,12 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class RefundServiceImpl implements RefundService {
-    private final RefundRepository refundRepository;
-    private final SaleRepository saleRepository;
-    private final RefundEntityMapper refundMapper;
-
+    private final RefundDataPort refundDataPort;
     @Override
     @Transactional
     @NonNull
@@ -34,7 +30,7 @@ public class RefundServiceImpl implements RefundService {
                               @NonNull String reason) {
         log.debug("Creating refund for sale ID: {} by cashier: {}", saleId, cashierId);
         
-        SaleEntity sale = saleRepository.findById(saleId)
+        Sale sale = refundDataPort.findSaleById(saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found with ID: " + saleId));
         
         if (sale.getStatus() != SaleStatus.COMPLETED) {
@@ -45,19 +41,21 @@ public class RefundServiceImpl implements RefundService {
             throw new IllegalArgumentException("Refund amount cannot be greater than sale total");
         }
         
-        RefundEntity refund = new RefundEntity();
-        refund.setOriginalSaleId(saleId);
-        refund.setAmount(amount);
-        refund.setRefundMethod(refundMethod);
-        refund.setCashierId(cashierId);
-        refund.setReason(reason);
-        refund.setReceiptNumber(generateRefundReceiptNumber());
+        Refund refund = Refund.builder()
+                .originalSaleId(saleId)
+                .amount(amount)
+                .refundMethod(refundMethod)
+                .timestamp(LocalDateTime.now())
+                .cashierId(cashierId)
+                .cashierName("")
+                .reason(reason)
+                .receiptNumber(generateRefundReceiptNumber())
+                .build();
         
         sale.setStatus(SaleStatus.REFUNDED);
-        saleRepository.save(sale);
+        refundDataPort.saveSale(sale);
         
-        refund = refundRepository.save(refund);
-        return refundMapper.entityToModel(refund);
+        return refundDataPort.save(refund);
     }
 
     @Override
@@ -65,8 +63,7 @@ public class RefundServiceImpl implements RefundService {
     @NonNull
     public Refund getRefund(@NonNull Long id) {
         log.debug("Retrieving refund with ID: {}", id);
-        return refundRepository.findById(id)
-                .map(refundMapper::entityToModel)
+        return refundDataPort.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Refund not found with ID: " + id));
     }
 
@@ -75,9 +72,7 @@ public class RefundServiceImpl implements RefundService {
     @NonNull
     public List<Refund> getRefundsByDateRange(@NonNull LocalDateTime start, @NonNull LocalDateTime end) {
         log.debug("Retrieving refunds between {} and {}", start, end);
-        return refundRepository.findByTimestampBetween(start, end).stream()
-                .map(refundMapper::entityToModel)
-                .collect(Collectors.toList());
+        return refundDataPort.findByTimestampBetween(start, end);
     }
 
     @Override
@@ -85,9 +80,7 @@ public class RefundServiceImpl implements RefundService {
     @NonNull
     public List<Refund> getRefundsByCashier(@NonNull Long cashierId) {
         log.debug("Retrieving refunds for cashier ID: {}", cashierId);
-        return refundRepository.findByCashierId(cashierId).stream()
-                .map(refundMapper::entityToModel)
-                .collect(Collectors.toList());
+        return refundDataPort.findByCashierId(cashierId);
     }
 
     @Override
